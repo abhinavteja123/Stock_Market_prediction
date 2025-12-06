@@ -697,8 +697,17 @@ if 'df' in st.session_state:
 
     # Target Distribution
     st.subheader("🎯 Target Distribution")
+    
+    # Check target values
+    st.write(f"**Target value range:** min={df['target'].min()}, max={df['target'].max()}")
+    st.write(f"**Target unique values:** {sorted(df['target'].unique())}")
+    st.write(f"**Target dtype:** {df['target'].dtype}")
+    
     fig, ax = plt.subplots(figsize=(8, 6))
     colors = ['#e74c3c', '#27ae60']
+    target_counts = df['target'].value_counts()
+    st.write(f"**Full dataset:** DOWN={target_counts.get(0, 0)} ({target_counts.get(0, 0)/len(df)*100:.1f}%), UP={target_counts.get(1, 0)} ({target_counts.get(1, 0)/len(df)*100:.1f}%)")
+    
     df['target'].value_counts().plot.pie(autopct='%1.1f%%', ax=ax, colors=colors, startangle=90)
     ax.set_title('Price Movement Distribution', fontsize=14, fontweight='bold')
     st.pyplot(fig)
@@ -742,37 +751,58 @@ if 'df' in st.session_state:
 
     st.write(f"Training set shape: {X_train.shape}")
     st.write(f"Validation set shape: {X_valid.shape}")
+    
+    # Show class distribution
+    train_counts = Y_train.value_counts()
+    valid_counts = Y_valid.value_counts()
+    st.write(f"**Training class distribution:** DOWN={train_counts.get(0, 0)}, UP={train_counts.get(1, 0)}")
+    st.write(f"**Validation class distribution:** DOWN={valid_counts.get(0, 0)}, UP={valid_counts.get(1, 0)}")
+    
+    if len(train_counts) < 2 or len(valid_counts) < 2:
+        st.error("⚠️ WARNING: One or both sets have only one class! This will cause prediction issues.")
+        st.error("Try adjusting the validation split or using a longer date range.")
 
-    # ✅ More regularized XGBoost to reduce overfitting
+    # ✅ Simplified XGBoost with better class handling
+    class_counts = Y_train.value_counts()
+    n_down = class_counts.get(0, 0)
+    n_up = class_counts.get(1, 0)
+    scale_pos_weight = n_down / n_up if n_up > 0 else 1.0
+    
+    st.write(f"📊 **Class Balance Info:**")
+    st.write(f"- Training DOWN: {n_down}, UP: {n_up}")
+    st.write(f"- Ratio DOWN/UP: {scale_pos_weight:.4f}")
+    
+    # Much simpler, more robust parameters
     xgb_params = {
-        "n_estimators": 300,
+        "n_estimators": 50,
         "max_depth": 3,
-        "learning_rate": 0.05,
-        "subsample": 0.7,
-        "colsample_bytree": 0.7,
-        "reg_alpha": 1.0,
-        "reg_lambda": 2.0,
-        "eval_metric": 'logloss',
-        "random_state": 2022
+        "learning_rate": 0.1,
+        "scale_pos_weight": scale_pos_weight,
+        "random_state": 2022,
+        "use_label_encoder": False,
+        "eval_metric": 'logloss'
     }
 
     classical_templates = {
         "Logistic Regression": Pipeline([
             ("scaler", StandardScaler()),
-            ("model", LogisticRegression(max_iter=1000))
+            ("model", LogisticRegression(max_iter=1000, class_weight='balanced', random_state=2022))
         ]),
         "SVM (Poly)": Pipeline([
             ("scaler", StandardScaler()),
-            ("model", SVC(kernel='poly', probability=True))
+            ("model", SVC(kernel='poly', probability=True, class_weight='balanced', random_state=2022))
         ]),
         "XGBoost": Pipeline([
+            ("scaler", StandardScaler()),  # Add scaling for XGBoost too
             ("model", XGBClassifier(**xgb_params))
         ]),
         "Random Forest": Pipeline([
             ("model", RandomForestClassifier(
-                n_estimators=300,
-                max_depth=None,
+                n_estimators=200,
+                max_depth=10,
+                min_samples_split=10,
                 min_samples_leaf=5,
+                class_weight='balanced',
                 random_state=2022
             ))
         ]),
@@ -780,12 +810,13 @@ if 'df' in st.session_state:
             ("scaler", StandardScaler()),
             ("model", VotingClassifier(
                 estimators=[
-                    ("lr", LogisticRegression(max_iter=1000)),
+                    ("lr", LogisticRegression(max_iter=1000, class_weight='balanced', random_state=2022)),
                     ("xgb", XGBClassifier(**xgb_params)),
                     ("rf", RandomForestClassifier(
-                        n_estimators=300,
-                        max_depth=None,
+                        n_estimators=200,
+                        max_depth=10,
                         min_samples_leaf=5,
+                        class_weight='balanced',
                         random_state=2022
                     ))
                 ],
@@ -805,6 +836,29 @@ if 'df' in st.session_state:
         return np.array(X_seq), np.array(y_seq)
 
     if st.button("🎯 Train Models", type="primary"):
+        # Pre-training validation
+        st.write("### 🔍 Pre-Training Validation")
+        
+        # Check for data quality issues
+        if X_train.isnull().any().any():
+            st.error("❌ Training data contains NaN values!")
+            st.stop()
+        
+        if X_valid.isnull().any().any():
+            st.error("❌ Validation data contains NaN values!")
+            st.stop()
+            
+        # Check class distribution
+        train_class_dist = Y_train.value_counts()
+        if len(train_class_dist) < 2:
+            st.error(f"❌ Training set has only ONE class: {train_class_dist.to_dict()}")
+            st.error("Cannot train a binary classifier with only one class!")
+            st.stop()
+        
+        st.success(f"✅ Data validation passed!")
+        st.write(f"- Features have no missing values")
+        st.write(f"- Both classes present in training set")
+        
         with st.spinner("🔄 Training machine learning and deep learning models..."):
             trained_models = []
             results = []
@@ -817,9 +871,24 @@ if 'df' in st.session_state:
                 train_probs = pipeline_model.predict_proba(X_train)[:, 1]
                 valid_probs = pipeline_model.predict_proba(X_valid)[:, 1]
 
+                # Debug: Check probability distribution
+                st.write(f"**{name} - Probability Stats:**")
+                st.write(f"- Min prob: {valid_probs.min():.4f}, Max prob: {valid_probs.max():.4f}")
+                st.write(f"- Mean prob: {valid_probs.mean():.4f}, Median prob: {np.median(valid_probs):.4f}")
+                st.write(f"- Probs > 0.5: {(valid_probs > 0.5).sum()}/{len(valid_probs)}")
+                
                 train_auc = metrics.roc_auc_score(Y_train, train_probs)
                 valid_auc = metrics.roc_auc_score(Y_valid, valid_probs)
+                
+                # Use default 0.5 threshold first to check
+                valid_preds_default = (valid_probs >= 0.5).astype(int)
+                default_f1 = metrics.f1_score(Y_valid, valid_preds_default, zero_division=0)
+                st.write(f"- Default threshold (0.5) F1: {default_f1:.4f}")
+                st.write(f"- Predictions at 0.5: DOWN={np.sum(valid_preds_default==0)}, UP={np.sum(valid_preds_default==1)}")
+                
                 threshold_info = find_optimal_threshold(Y_valid, valid_probs, metric_priority="f1")
+                st.write(f"- Optimal threshold: {threshold_info['threshold']:.4f}, F1: {threshold_info['f1']:.4f}")
+                
                 valid_preds_threshold = (valid_probs >= threshold_info["threshold"]).astype(int)
                 valid_accuracy = metrics.accuracy_score(Y_valid, valid_preds_threshold)
                 valid_f1 = metrics.f1_score(Y_valid, valid_preds_threshold, zero_division=0)
@@ -1065,9 +1134,17 @@ if 'df' in st.session_state:
 
                 if selected_model['type'] == 'classical':
                     probas = selected_model['model'].predict_proba(X_eval)[:, 1]
+                    # Use model's default predict instead of threshold
+                    preds = selected_model['model'].predict(X_eval)
                 else:
                     probas = selected_model['model'].predict(X_eval, verbose=0).ravel()
-                preds = (probas >= threshold_value).astype(int)
+                    preds = (probas >= 0.5).astype(int)  # Use fixed 0.5 threshold for LSTM
+                
+                # Debug info
+                st.write(f"**Debug Info:**")
+                st.write(f"- Probabilities range: [{probas.min():.4f}, {probas.max():.4f}]")
+                st.write(f"- Predictions: DOWN={np.sum(preds==0)}, UP={np.sum(preds==1)}")
+                st.write(f"- Actual: DOWN={np.sum(y_eval==0)}, UP={np.sum(y_eval==1)}")
 
                 cm = metrics.confusion_matrix(y_eval, preds)
                 fig, ax = plt.subplots(figsize=(8, 6))
