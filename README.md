@@ -3,7 +3,10 @@
 
 **LINK : https://stockmarketprediction1.streamlit.app/**
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+**Interactive Dashboard LINK : https://stock-market-prediction-html-1.onrender.com (NOTE: This is the same website with interactive Dashboard)
+
+
+**[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.20.0-orange.svg)](https://www.tensorflow.org/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-1.7.2-yellow.svg)](https://scikit-learn.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
